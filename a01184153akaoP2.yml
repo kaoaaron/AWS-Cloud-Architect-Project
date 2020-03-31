@@ -1,0 +1,189 @@
+Description:
+  Creates a subset of the proposed solution in the attached powerpoint.
+  Consists of 10 resources. S3 sends data to SNS which sends message to 2 queues.
+  One to data anaylsts, and the other to a lambda function.
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  BucketPubName:
+    Description: Name of Public Bucket (client site)
+    Type: String
+    Default: "changethisvalue325235"
+  BucketStoreName:
+    Description: Name of Private Bucket (store personal data)
+    Type: String
+    Default: "changethisvalue3252345"
+
+Resources:
+  # 1. for static website hosting for client to access NodeJS site
+  S3website:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Ref: BucketPubName
+      Tags:
+        - Key: Application Name
+          Value: s3website
+        - Key: Company
+          Value: Unicorns Ltd.
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+
+  # 2. for storing data from sftp transfer
+  S3store:
+    Type: AWS::S3::Bucket
+    DependsOn:
+      - SNSTopic
+    Properties:
+      BucketName:
+        Ref: BucketStoreName
+      Tags:
+        - Key: Company
+          Value: Unicorns Ltd.
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        TopicConfigurations:
+          - Event: s3:ObjectCreated:*
+            Topic:
+              Ref: SNSTopic
+
+  # 3. sns topic resource
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: "SampleTopic"
+
+  # 4. setup connection to subscription for sqs
+  SNSDataSubscription:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      TopicArn:
+        Ref: SNSTopic
+      Endpoint:
+        Fn::GetAtt:
+          - "DataQueue"
+          - "Arn"
+      Protocol: sqs
+      RawMessageDelivery: "true"
+
+  # 5. setup connection to subscription for sqs
+  SNSStoreSubscription:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      TopicArn:
+        Ref: SNSTopic
+      Endpoint:
+        Fn::GetAtt:
+          - "StoreQueue"
+          - "Arn"
+      Protocol: sqs
+      RawMessageDelivery: "true"
+
+  # 6. allows S3 to SNS connection
+  TopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowBucketToPushNotificationEffect
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sns:Publish
+            Resource: "*"
+      Topics:
+        - Ref: SNSTopic
+
+  # 7. queue for data notification for analysts
+  DataQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: DataQueue
+
+  # 8. queue for eventual storage to dynamo
+  StoreQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: StoreQueue
+
+  # 9. IAM role for lambda function
+  LambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+
+  # 10. lambda for eventual storage to dynamo
+  LambdaFunc:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python2.7
+      Role:
+        Fn::GetAtt:
+          - "LambdaIAMRole"
+          - "Arn"
+      Handler: index.handler
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              print("Transfer stuff to DynamoDB here)
+
+Outputs:
+  BucketName:
+    Value:
+      Ref: S3website
+    Description: S3 bucket with website hosting enabled to host NodeJS application
+  BucketName2:
+    Value:
+      Ref: S3store
+    Description: for storing data from sftp transfer
+  SNSTopicR:
+    Value:
+      Ref: SNSTopic
+    Description: sns topic resource
+  SNSDataSub:
+    Value:
+      Ref: SNSDataSubscription
+    Description: setup connection to subscription for sqs
+  SNSStoreSub:
+    Value:
+      Ref: SNSStoreSubscription
+    Description: setup connection to subscription for sqs
+  TopicPol:
+    Value:
+      Ref: TopicPolicy
+    Description: allows S3 to SNS connection
+  DatQueue:
+    Value:
+      Ref: DataQueue
+    Description: queue for data notification for analysts
+  StoQueue:
+    Value:
+      Ref: StoreQueue
+    Description: queue for eventual storage to dynamo
+  LRole:
+    Value:
+      Ref: LambdaIAMRole
+    Description: IAM role for lambda function
+  LFunc:
+    Value:
+      Ref: LambdaFunc
+    Description: lambda for eventual storage to dynamo
